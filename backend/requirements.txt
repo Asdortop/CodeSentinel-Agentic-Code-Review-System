@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+google-genai
+httpx
+pydantic
+python-dotenv
+bandit
+radon
+packaging
