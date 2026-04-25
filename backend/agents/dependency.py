@@ -17,7 +17,7 @@ from google import genai
 from google.genai import types
 
 _client = None
-from gemini_client import get_client
+from gemini_client import get_client, call_with_retry
 
 DEPENDENCY_SYSTEM = """You are DependencyAgent, a security and dependency management expert.
 
@@ -255,7 +255,7 @@ async def run_dependency_agent(files_dict: Dict[str, str]) -> List[Finding]:
 Analyze the above and return your dependency findings as a JSON array.
 """
 
-    result = get_client().models.generate_content(
+    result = call_with_retry(
         model=MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(

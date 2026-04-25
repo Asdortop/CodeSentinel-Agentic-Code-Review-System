@@ -14,7 +14,7 @@ from config import GOOGLE_API_KEY, MODEL
 from models import Finding
 from tools.code_runner import run_radon
 from agents.security import _format_code, _parse_findings, _format_tool_results
-from gemini_client import get_client
+from gemini_client import get_client, call_with_retry
 
 QUALITY_SYSTEM = """You are QualityAgent, a senior software engineer conducting a code quality review.
 
@@ -76,7 +76,7 @@ async def run_quality_agent(files_dict: Dict[str, str], context_files: List[str]
 Analyze the above and return your code quality findings as a JSON array.
 """
 
-    result = get_client().models.generate_content(
+    result = call_with_retry(
         model=MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(

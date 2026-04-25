@@ -94,34 +94,44 @@ async def fetch_repo_tree(repo_url: str) -> Tuple[str, str, List[str]]:
 
 async def fetch_file_contents(owner: str, repo: str, file_paths: List[str]) -> Dict[str, str]:
     """
-    Fetches file contents from GitHub API.
+    Fetches file contents from GitHub API concurrently (asyncio.gather).
     Returns {path: content_string}.
     Truncates each file to MAX_LINES lines.
     """
-    contents: Dict[str, str] = {}
+    import asyncio
+
+    async def _fetch_one(client: httpx.AsyncClient, path: str) -> Optional[tuple]:
+        try:
+            resp = await client.get(
+                f"https://api.github.com/repos/{owner}/{repo}/contents/{path}",
+                headers=_headers(),
+            )
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            if data.get("encoding") == "base64":
+                raw = base64.b64decode(data["content"]).decode("utf-8", errors="replace")
+            else:
+                raw = data.get("content", "")
+            lines = raw.splitlines()
+            if len(lines) > MAX_LINES:
+                lines = lines[:MAX_LINES]
+                lines.append(f"# [TRUNCATED — file has more lines, showing first {MAX_LINES}]")
+            return (path, "\n".join(lines))
+        except Exception:
+            return None
 
     async with httpx.AsyncClient(timeout=30) as client:
-        for path in file_paths:
-            try:
-                resp = await client.get(
-                    f"https://api.github.com/repos/{owner}/{repo}/contents/{path}",
-                    headers=_headers(),
-                )
-                if resp.status_code != 200:
-                    continue
-                data = resp.json()
-                if data.get("encoding") == "base64":
-                    raw = base64.b64decode(data["content"]).decode("utf-8", errors="replace")
-                else:
-                    raw = data.get("content", "")
+        results = await asyncio.gather(
+            *[_fetch_one(client, path) for path in file_paths],
+            return_exceptions=True,
+        )
 
-                lines = raw.splitlines()
-                if len(lines) > MAX_LINES:
-                    lines = lines[:MAX_LINES]
-                    lines.append(f"# [TRUNCATED — file has more lines, showing first {MAX_LINES}]")
-                contents[path] = "\n".join(lines)
-            except Exception:
-                continue  # Skip unreadable files silently
+    contents: Dict[str, str] = {}
+    for result in results:
+        if result and not isinstance(result, Exception):
+            path, content = result
+            contents[path] = content
 
     return contents
 

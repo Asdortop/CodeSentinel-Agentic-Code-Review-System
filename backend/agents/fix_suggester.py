@@ -12,7 +12,7 @@ from google.genai import types
 
 from config import GOOGLE_API_KEY, MODEL
 from models import Finding, FixSuggestion
-from gemini_client import get_client
+from gemini_client import get_client, call_with_retry
 
 FIX_SUGGESTER_SYSTEM = """You are FixSuggesterAgent, an expert software engineer who writes concrete, production-quality code fixes.
 
@@ -86,7 +86,7 @@ async def run_fix_suggester(
 Return a JSON array with one fix per finding_id.
 """
 
-    result = get_client().models.generate_content(
+    result = call_with_retry(
         model=MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(

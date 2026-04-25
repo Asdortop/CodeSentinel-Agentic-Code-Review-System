@@ -19,6 +19,9 @@ export default function App() {
     setError(null)
     setRepoUrl(url)
 
+    // Local flag — avoids stale React state inside async closure
+    let completed = false
+
     try {
       const response = await fetch('/review', {
         method: 'POST',
@@ -27,7 +30,7 @@ export default function App() {
       })
 
       if (!response.ok) {
-        throw new Error(`Server error: ${response.status}`)
+        throw new Error(`Server error: ${response.status} — is the backend running on port 8000?`)
       }
 
       const reader = response.body.getReader()
@@ -40,7 +43,7 @@ export default function App() {
 
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n')
-        buffer = lines.pop() // keep incomplete line
+        buffer = lines.pop() // keep incomplete last line
 
         let eventType = 'agent_update'
         let dataLine = null
@@ -51,19 +54,21 @@ export default function App() {
           } else if (line.startsWith('data: ')) {
             dataLine = line.slice(6)
           } else if (line === '') {
-            // End of event
+            // End of SSE event block
             if (dataLine) {
               try {
                 const parsed = JSON.parse(dataLine)
                 if (eventType === 'report_complete') {
+                  completed = true
                   setReport(parsed)
                   setStatus('complete')
                 } else if (eventType === 'error') {
+                  completed = true
                   setError(parsed.message || 'An unknown error occurred')
                   setStatus('error')
                 } else {
+                  // agent_update events
                   setEvents(prev => {
-                    // Update existing event or add new
                     const idx = prev.findIndex(
                       e => e.agent === parsed.agent && e.status === 'running'
                     )
@@ -72,7 +77,6 @@ export default function App() {
                       updated[idx] = parsed
                       return updated
                     }
-                    // Don't add duplicate running events
                     const alreadyRunning = prev.some(
                       e => e.agent === parsed.agent && e.status === 'running'
                     )
@@ -81,7 +85,7 @@ export default function App() {
                   })
                 }
               } catch {
-                // ignore parse errors
+                // ignore JSON parse errors for malformed chunks
               }
             }
             eventType = 'agent_update'
@@ -90,14 +94,16 @@ export default function App() {
         }
       }
 
-      // If stream ended without report_complete
-      if (status !== 'complete' && status !== 'error') {
-        setStatus(report ? 'complete' : 'error')
-        if (!report) setError('Stream ended unexpectedly.')
+      // Stream ended — if we never got report_complete or error
+      if (!completed) {
+        setError('Stream ended before a report was received. Check the backend terminal for errors.')
+        setStatus('error')
       }
     } catch (err) {
-      setError(err.message || 'Connection failed. Is the backend running?')
-      setStatus('error')
+      if (!completed) {
+        setError(err.message || 'Connection failed. Make sure the backend is running on port 8000.')
+        setStatus('error')
+      }
     }
   }, [])
 

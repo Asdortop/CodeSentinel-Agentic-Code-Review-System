@@ -272,7 +272,10 @@ async def review_repo(request: ReviewRequest):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "model": "gemini-2.0-flash", "api_key_set": bool(GOOGLE_API_KEY)}
+    from config import LLM_BACKEND, OLLAMA_MODEL, OLLAMA_BASE_URL, MODEL
+    if LLM_BACKEND == "ollama":
+        return {"status": "ok", "backend": "ollama", "model": OLLAMA_MODEL, "ollama_url": OLLAMA_BASE_URL}
+    return {"status": "ok", "backend": "gemini", "model": MODEL, "api_key_set": bool(GOOGLE_API_KEY)}
 
 
 if __name__ == "__main__":

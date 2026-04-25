@@ -12,7 +12,7 @@ from google.genai import types
 
 from config import GOOGLE_API_KEY, MODEL
 from models import CriticReport, Finding
-from gemini_client import get_client
+from gemini_client import get_client, call_with_retry
 
 CRITIC_SYSTEM = """You are CriticAgent, a senior principal engineer and security architect.
 
@@ -73,7 +73,7 @@ async def run_critic(all_findings: List[Finding]) -> CriticReport:
 Return the deduplicated, re-ranked findings with an executive summary as JSON.
 """
 
-    result = get_client().models.generate_content(
+    result = call_with_retry(
         model=MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(

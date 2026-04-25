@@ -13,7 +13,7 @@ from google.genai import types
 
 from config import GOOGLE_API_KEY, MODEL
 from models import AgentPlan
-from gemini_client import get_client
+from gemini_client import get_client, call_with_retry
 
 
 def _summarize_repo(files_dict: Dict[str, str]) -> str:
@@ -74,7 +74,7 @@ async def run_planner(files_dict: Dict[str, str]) -> AgentPlan:
     """
     repo_summary = _summarize_repo(files_dict)
 
-    response = get_client().models.generate_content(
+    response = call_with_retry(
         model=MODEL,
         contents=f"Analyze this repository and decide which agents to invoke:\n\n{repo_summary}",
         config=types.GenerateContentConfig(
@@ -85,10 +85,12 @@ async def run_planner(files_dict: Dict[str, str]) -> AgentPlan:
     )
 
     raw = response.text.strip()
+    print(f"[PlannerAgent] Raw response (first 400 chars):\n{raw[:400]}\n---")
 
     # Strip markdown code fences if present
     raw = re.sub(r"^```(?:json)?\s*", "", raw)
     raw = re.sub(r"\s*```$", "", raw)
+    raw = raw.strip()
 
     try:
         data = json.loads(raw)
@@ -99,7 +101,9 @@ async def run_planner(files_dict: Dict[str, str]) -> AgentPlan:
             dependency_files=data.get("dependency_files", []),
             notes=data.get("notes", ""),
         )
-    except (json.JSONDecodeError, Exception):
+        print(f"[PlannerAgent] Plan: invoke {plan.agents_to_invoke}")
+    except (json.JSONDecodeError, Exception) as e:
+        print(f"[PlannerAgent] JSON parse failed ({e}), using fallback plan")
         # Fallback: invoke all relevant agents based on file presence
         plan = _fallback_plan(files_dict)
 

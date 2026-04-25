@@ -13,7 +13,7 @@ from google.genai import types
 from config import GOOGLE_API_KEY, MODEL
 from models import Finding, FixSuggestion, VerifiedFix
 from agents.fix_suggester import run_fix_suggester
-from gemini_client import get_client
+from gemini_client import get_client, call_with_retry
 
 RE_EVALUATOR_SYSTEM = """You are ReEvaluatorAgent, a rigorous security and code quality auditor.
 
@@ -110,7 +110,7 @@ async def _evaluate_once(finding: Finding, fix: FixSuggestion) -> dict:
 Does this fix actually address the security/quality issue? Evaluate carefully.
 """
 
-    result = get_client().models.generate_content(
+    result = call_with_retry(
         model=MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(

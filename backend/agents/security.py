@@ -13,7 +13,7 @@ from google.genai import types
 from config import GOOGLE_API_KEY, MODEL
 from models import Finding
 from tools.code_runner import run_bandit, run_secret_patterns
-from gemini_client import get_client
+from gemini_client import get_client, call_with_retry
 
 SECURITY_SYSTEM = """You are SecurityAgent, a world-class application security expert conducting a code review.
 
@@ -82,7 +82,7 @@ async def run_security_agent(files_dict: Dict[str, str], context_files: List[str
 Analyze the above and return your security findings as a JSON array.
 """
 
-    model = get_client().models.generate_content(
+    model = call_with_retry(
         model=MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(
@@ -92,7 +92,9 @@ Analyze the above and return your security findings as a JSON array.
         ),
     )
 
-    return _parse_findings(model.text, agent="security")
+    raw_text = model.text
+    print(f"[SecurityAgent] Raw response (first 500 chars):\n{raw_text[:500]}\n---")
+    return _parse_findings(raw_text, agent="security")
 
 
 def _format_tool_results(results: list) -> str:
@@ -115,24 +117,119 @@ def _format_code(files_dict: Dict[str, str]) -> str:
 
 
 def _parse_findings(raw: str, agent: str) -> List[Finding]:
+    """Parse LLM JSON output into Finding objects.
+    Handles:
+    - Raw arrays: [...]
+    - Wrapped objects (any case): {"Findings": [...]}, {"findings": [...]}, {"results": [...]}
+    - Mistral field aliases: Vulnerability→issue, Description→reasoning, etc.
+    """
     raw = raw.strip()
+    # Strip markdown code fences
     raw = re.sub(r"^```(?:json)?\s*", "", raw)
     raw = re.sub(r"\s*```$", "", raw)
+    raw = raw.strip()
+
     try:
         data = json.loads(raw)
-        findings = []
-        for item in data:
-            try:
-                findings.append(Finding(
-                    file=item.get("file", "unknown"),
-                    line=item.get("line"),
-                    issue=item.get("issue", ""),
-                    severity=item.get("severity", "Medium"),
-                    reasoning=item.get("reasoning", ""),
-                    agent=agent,
-                ))
-            except Exception:
-                continue
-        return findings
-    except (json.JSONDecodeError, Exception):
+    except json.JSONDecodeError as e:
+        print(f"[{agent}] JSON parse error: {e}\nRaw: {raw[:300]}")
         return []
+
+    # ── Unwrap object envelopes ─────────────────────────────────────────
+    if isinstance(data, dict):
+        # Case-insensitive search for list values
+        # Priority order: common list keys first
+        list_keys = [
+            "findings", "results", "issues", "vulnerabilities",
+            "data", "items", "observations", "errors", "warnings",
+        ]
+        found_list = None
+
+        # Try lowercase match first
+        data_lower = {k.lower(): v for k, v in data.items()}
+        for key in list_keys:
+            if key in data_lower and isinstance(data_lower[key], list):
+                found_list = data_lower[key]
+                break
+
+        # If still not found, grab any list value
+        if found_list is None:
+            for v in data.values():
+                if isinstance(v, list) and len(v) > 0:
+                    found_list = v
+                    break
+
+        if found_list is not None:
+            data = found_list
+        elif "issue" in data_lower or "severity" in data_lower or "vulnerability" in data_lower:
+            # Single finding as a dict
+            data = [data]
+        else:
+            print(f"[{agent}] Unexpected dict format, keys: {list(data.keys())} — returning empty")
+            return []
+
+    if not isinstance(data, list):
+        print(f"[{agent}] Expected list, got {type(data).__name__}")
+        return []
+
+    # ── Field alias map (handles Mistral's non-standard names) ──────────
+    # Maps our expected field → list of aliases the model might use
+    FIELD_ALIASES = {
+        "file":      ["file", "filename", "path", "filepath", "location", "module"],
+        "line":      ["line", "line_number", "lineno", "line_no"],
+        "issue":     ["issue", "vulnerability", "title", "name", "problem",
+                      "vuln_name", "finding", "check", "message"],
+        "severity":  ["severity", "risk", "risk_level", "criticality", "priority", "impact"],
+        "reasoning": ["reasoning", "description", "details", "explanation",
+                      "detail", "reason", "rationale", "solution",
+                      "recommendation", "remediation", "info"],
+    }
+
+    SEVERITY_NORMALIZE = {
+        "critical": "Critical", "crit": "Critical", "p1": "Critical",
+        "high": "High", "p2": "High",
+        "medium": "Medium", "med": "Medium", "moderate": "Medium", "p3": "Medium",
+        "low": "Low", "minor": "Low", "info": "Low", "informational": "Low", "p4": "Low",
+    }
+
+    def _get(item: dict, field: str, default=None):
+        """Case-insensitive field lookup with aliases."""
+        item_lower = {k.lower(): v for k, v in item.items()}
+        for alias in FIELD_ALIASES.get(field, [field]):
+            if alias in item_lower:
+                return item_lower[alias]
+        return default
+
+    findings = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        try:
+            raw_severity = str(_get(item, "severity", "Medium") or "Medium")
+            severity = SEVERITY_NORMALIZE.get(raw_severity.lower().strip(), "Medium")
+
+            # Build issue text — combine title + description for richer context
+            issue = str(_get(item, "issue", "") or "")
+            reasoning = str(_get(item, "reasoning", "") or "")
+
+            # If issue is empty but reasoning has content, swap
+            if not issue and reasoning:
+                issue = reasoning[:120]
+
+            if not issue:
+                continue  # skip items with no discernible issue text
+
+            findings.append(Finding(
+                file=str(_get(item, "file", "(unknown file)") or "(unknown file)"),
+                line=_get(item, "line"),
+                issue=issue,
+                severity=severity,
+                reasoning=reasoning or issue,
+                agent=agent,
+            ))
+        except Exception as e:
+            print(f"[{agent}] Skipping malformed item: {e} — {item}")
+            continue
+
+    print(f"[{agent}] Parsed {len(findings)} finding(s)")
+    return findings

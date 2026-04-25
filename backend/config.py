@@ -6,7 +6,13 @@ load_dotenv()
 GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
 GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
 
-MODEL: str = "gemini-2.0-flash"
+# LLM Backend: "gemini" or "ollama"
+LLM_BACKEND: str = os.getenv("LLM_BACKEND", "gemini").lower()
+OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "mistral")
+
+# Gemini model (only used when LLM_BACKEND=gemini)
+MODEL: str = "gemini-2.0-flash-lite"
 
 MAX_FILES: int = 40
 MAX_LINES: int = 300
