@@ -14,8 +14,8 @@ OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "mistral")
 # Gemini model (only used when LLM_BACKEND=gemini)
 MODEL: str = "gemini-2.0-flash-lite"
 
-MAX_FILES: int = 40
-MAX_LINES: int = 300
+MAX_FILES: int = int(os.getenv("MAX_FILES", "40"))
+MAX_LINES: int = int(os.getenv("MAX_LINES", "300"))
 
 RELEVANT_EXTENSIONS = {
     ".py", ".js", ".ts", ".jsx", ".tsx",

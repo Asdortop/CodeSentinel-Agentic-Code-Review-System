@@ -152,17 +152,35 @@ def _parse_findings(raw: str, agent: str) -> List[Finding]:
                 found_list = data_lower[key]
                 break
 
-        # If still not found, grab any list value
+        # If still not found, check if any VALUE is a JSON string containing an array
         if found_list is None:
             for v in data.values():
-                if isinstance(v, list) and len(v) > 0:
-                    found_list = v
-                    break
+                if isinstance(v, str) and v.strip().startswith('['):
+                    try:
+                        parsed = json.loads(v)
+                        if isinstance(parsed, list):
+                            found_list = parsed
+                            break
+                    except Exception:
+                        pass
+
+        # Mistral's bizarre pattern: JSON array embedded AS A DICT KEY
+        if found_list is None:
+            for k in data.keys():
+                stripped = k.strip()
+                if stripped.startswith('['):
+                    try:
+                        parsed = json.loads(stripped)
+                        if isinstance(parsed, list):
+                            found_list = parsed
+                            print(f"[{agent}] Extracted array from dict KEY (Mistral quirk)")
+                            break
+                    except Exception:
+                        pass
 
         if found_list is not None:
             data = found_list
         elif "issue" in data_lower or "severity" in data_lower or "vulnerability" in data_lower:
-            # Single finding as a dict
             data = [data]
         else:
             print(f"[{agent}] Unexpected dict format, keys: {list(data.keys())} — returning empty")

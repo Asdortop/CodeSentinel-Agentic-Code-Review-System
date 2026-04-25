@@ -85,8 +85,32 @@ async def fetch_repo_tree(repo_url: str) -> Tuple[str, str, List[str]]:
         if item["type"] == "blob" and _is_relevant(item["path"])
     ]
 
-    # Limit to MAX_FILES, prioritise shorter paths (root-level first)
-    blobs.sort(key=lambda p: (p.count("/"), p))
+    # ── Priority sort ────────────────────────────────────────────────────
+    # Priority 0 = most important, 3 = least
+    HIGH_PRIORITY_NAMES = {
+        "auth", "login", "password", "secret", "token", "key", "credential",
+        "config", "settings", "db", "database", "query", "sql", "session",
+        "middleware", "security", "api", "admin", "user", "account",
+    }
+
+    def _priority(path: str) -> int:
+        import os
+        basename = os.path.basename(path).lower()
+        name_no_ext = os.path.splitext(basename)[0]
+        # Priority 0: dep files and .env always first
+        if basename in RELEVANT_FILENAMES or basename.startswith(".env"):
+            return 0
+        # Priority 1: security-sensitive names anywhere in the path
+        path_lower = path.lower()
+        if any(kw in path_lower for kw in HIGH_PRIORITY_NAMES):
+            return 1
+        # Priority 2: root-level files
+        if path.count("/") <= 1:
+            return 2
+        # Priority 3: nested files
+        return 3
+
+    blobs.sort(key=lambda p: (_priority(p), p.count("/"), p))
     blobs = blobs[:MAX_FILES]
 
     return owner, repo, blobs
